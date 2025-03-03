@@ -1,0 +1,10 @@
+---
+description: 明确第一周CNN任务的作用
+globs: 这个week1_CNN项目的目的是搭建一个CNN网络学习Ackley_train和Rosenbrock__train数据集，使对应的测试集Ackley_test和Rosenbrock_test上的pearson ratio超过0.85。
+alwaysApply: false
+---
+
+# Your rule content
+
+- You can @ files here
+- You can use markdown but dont have to

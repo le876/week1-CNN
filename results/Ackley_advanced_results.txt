@@ -1,0 +1,31 @@
+测试集评估结果:
+皮尔逊相关系数: 0.8450
+MSE: 10.4197
+RMSE: 3.2280
+MAE: 2.6395
+R^2: -22.5575
+Loss: 1.1649
+
+训练配置:
+function: Ackley
+data_augmentation: True
+batch_size: 64
+model_type: advanced
+dropout_rate: 0.4
+num_epochs: 100
+learning_rate: 0.0005
+weight_decay: 1e-05
+optimizer: adam
+loss_type: huber_correlation
+huber_delta: 1.0
+alpha: 0.5
+scheduler: None
+step_size: 30
+gamma: 0.1
+lr_patience: 10
+early_stopping: True
+patience: 15
+seed: 42
+output_dir: results
+log_interval: 5
+no_cuda: False

@@ -1,0 +1,32 @@
+测试集评估结果:
+皮尔逊相关系数: 0.9249
+MSE: 915819392.0000
+RMSE: 30262.5080
+MAE: 23263.6445
+R^2: 0.8529
+Loss: 915819376.6400
+
+训练配置:
+function: Rosenbrock
+data_augmentation: False
+batch_size: 64
+model_type: basic
+dropout_rate: 0.2
+num_epochs: 200
+learning_rate: 0.001
+weight_decay: 1e-06
+optimizer: adam
+loss_type: mse
+scheduler: None
+step_size: 30
+gamma: 0.1
+lr_patience: 10
+early_stopping: True
+patience: 50
+seed: 42
+output_dir: results
+log_interval: 5
+no_cuda: False
+gamma_focal: 2.0
+beta: 0.6
+adaptation_rate: 0.01
