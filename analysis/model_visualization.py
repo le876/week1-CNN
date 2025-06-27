@@ -1,227 +1,368 @@
-import numpy as np
 import torch
-import matplotlib.pyplot as plt
 import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
 from torchviz import make_dot
-import os
+from torch.utils.tensorboard import SummaryWriter
+import argparse
 import sys
+import os
 
-# 添加父目录到路径，以便导入其他模块
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# 添加项目根目录到Python路径
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+sys.path.insert(0, project_root)
 
-# 导入模型
-from models.cnn_model import CNN, load_data
-from models.advanced_cnn_model import AdvancedCNN
+from models.cnn_model import BasicCNN, AdvancedCNN, EnhancedCNN
 
-# 创建结果目录
-os.makedirs('visualizations', exist_ok=True)
-
-# 设置随机种子
-torch.manual_seed(42)
-np.random.seed(42)
-
-def visualize_model_architecture(model, input_shape, filename):
-    """可视化模型架构"""
-    x = torch.randn(1, *input_shape)
+def visualize_model_structure(model, input_shape=(1, 1, 4, 5), output_path='results/model_structure.png'):
+    """
+    可视化模型结构
+    Args:
+        model: PyTorch模型
+        input_shape: 输入张量的形状
+        output_path: 输出图片路径
+    """
+    x = torch.randn(input_shape)
     y = model(x)
-    dot = make_dot(y, params=dict(model.named_parameters()))
-    dot.format = 'png'
-    dot.render(filename, directory='visualizations')
-    print(f"模型架构图已保存为: visualizations/{filename}.png")
-
-def visualize_feature_maps(model, x_sample, layer_name, filename):
-    """可视化指定层的特征图"""
-    # 注册钩子来获取特征图
-    activation = {}
-    def get_activation(name):
-        def hook(model, input, output):
-            activation[name] = output.detach()
-        return hook
     
-    # 选择一个层来可视化
-    if hasattr(model, layer_name):
-        layer = getattr(model, layer_name)
-        if isinstance(layer, nn.Sequential):
-            # 如果是Sequential，选择第一个卷积层
-            for i, module in enumerate(layer):
-                if isinstance(module, nn.Conv1d):
-                    module.register_forward_hook(get_activation(f'{layer_name}_{i}'))
-        else:
-            layer.register_forward_hook(get_activation(layer_name))
+    # 使用torchviz生成计算图
+    dot = make_dot(y, params=dict(model.named_parameters()))
+    
+    # 确保输出目录存在
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    
+    # 保存图片
+    dot.render(output_path, format='png', cleanup=True)
+    print(f"模型结构图已保存到: {output_path}")
+
+def visualize_feature_maps(model, layer_name, input_tensor=None, output_path='results/feature_maps'):
+    """
+    可视化指定层的特征图
+    Args:
+        model: PyTorch模型
+        layer_name: 要可视化的层名称
+        input_tensor: 输入张量，如果为None则生成随机输入
+        output_path: 输出目录路径
+    """
+    if input_tensor is None:
+        input_tensor = torch.randn(1, 1, 4, 5)
+    
+    # 注册钩子函数来获取特征图
+    features = {}
+    def hook_fn(module, input, output):
+        features['output'] = output.detach()
+    
+    # 获取指定层
+    for name, module in model.named_modules():
+        if name == layer_name:
+            hook = module.register_forward_hook(hook_fn)
+            break
+    else:
+        print(f"可用的层名称:")
+        for name, _ in model.named_modules():
+            print(f"- {name}")
+        raise ValueError(f"未找到层: {layer_name}")
     
     # 前向传播
     model.eval()
     with torch.no_grad():
-        x = torch.FloatTensor(x_sample).unsqueeze(0)  # 添加批次维度
-        model(x)
+        _ = model(input_tensor)
     
-    # 可视化激活
-    for name, feat in activation.items():
-        fig, axs = plt.subplots(min(8, feat.size(1)), 1, figsize=(10, 2*min(8, feat.size(1))))
-        
-        # 如果只有一个通道
-        if feat.size(1) == 1:
-            plt.plot(feat[0, 0, :].cpu().numpy())
-            plt.title(f'特征图: {name}')
-        else:
-            for i in range(min(8, feat.size(1))):
-                axs[i].plot(feat[0, i, :].cpu().numpy())
-                axs[i].set_title(f'通道 {i}')
-            fig.suptitle(f'特征图: {name}')
-        
-        plt.tight_layout()
-        plt.savefig(f'visualizations/{filename}_{name}.png')
-        plt.close()
+    # 移除钩子
+    hook.remove()
     
-    print(f"特征图已保存到 visualizations/ 目录")
-
-def visualize_filters(model, layer_name, filename):
-    """可视化卷积滤波器"""
-    # 获取指定层
-    if hasattr(model, layer_name):
-        layer = getattr(model, layer_name)
-        
-        # 如果是Sequential，查找第一个卷积层
-        if isinstance(layer, nn.Sequential):
-            for i, module in enumerate(layer):
-                if isinstance(module, nn.Conv1d):
-                    weights = module.weight.data.cpu().numpy()
-                    visualize_weights(weights, f'{filename}_{layer_name}_{i}')
-        # 如果直接是卷积层
-        elif isinstance(layer, nn.Conv1d):
-            weights = layer.weight.data.cpu().numpy()
-            visualize_weights(weights, f'{filename}_{layer_name}')
-
-def visualize_weights(weights, filename):
-    """可视化权重"""
-    # weights形状: [out_channels, in_channels, kernel_size]
-    n_filters = min(16, weights.shape[0])
-    n_channels = weights.shape[1]
+    # 获取特征图
+    feature_maps = features['output'].squeeze(0)
     
-    fig, axs = plt.subplots(n_filters, n_channels, figsize=(n_channels*2, n_filters*2))
+    # 创建输出目录
+    os.makedirs(output_path, exist_ok=True)
     
-    # 调整单个过滤器的情况
-    if n_filters == 1 and n_channels == 1:
-        axs.plot(weights[0, 0, :])
-        axs.set_title(f'Filter 0, Channel 0')
-    elif n_filters == 1:
-        for c in range(n_channels):
-            axs[c].plot(weights[0, c, :])
-            axs[c].set_title(f'Filter 0, Channel {c}')
-    elif n_channels == 1:
-        for f in range(n_filters):
-            axs[f].plot(weights[f, 0, :])
-            axs[f].set_title(f'Filter {f}, Channel 0')
-    else:
-        for f in range(n_filters):
-            for c in range(n_channels):
-                axs[f, c].plot(weights[f, c, :])
-                axs[f, c].set_title(f'F{f}, Ch{c}')
+    # 可视化每个通道的特征图
+    num_channels = feature_maps.size(0)
+    num_cols = min(8, num_channels)
+    num_rows = (num_channels + num_cols - 1) // num_cols
+    
+    plt.figure(figsize=(2*num_cols, 2*num_rows))
+    for i in range(num_channels):
+        plt.subplot(num_rows, num_cols, i + 1)
+        plt.imshow(feature_maps[i].numpy(), cmap='viridis')
+        plt.axis('off')
+        plt.title(f'Channel {i+1}')
     
     plt.tight_layout()
-    plt.savefig(f'visualizations/{filename}_filters.png')
+    plt.savefig(os.path.join(output_path, f'{layer_name}_feature_maps.png'))
     plt.close()
-    print(f"滤波器权重已保存为: visualizations/{filename}_filters.png")
+    print(f"特征图已保存到: {os.path.join(output_path, f'{layer_name}_feature_maps.png')}")
 
-def visualize_predictions_2d(model, X, y, function_name, model_name):
-    """在2D输入空间上可视化预测"""
-    if X.shape[1] != 2:
-        print("此可视化仅适用于2D输入数据")
-        return
+def visualize_training_history(history_file, output_path='results/training_history.png'):
+    """
+    可视化训练历史
+    Args:
+        history_file: 包含训练历史的文件路径
+        output_path: 输出图片路径
+    """
+    # 读取训练历史数据
+    history = np.load(history_file)
     
-    # 创建网格点
-    x_min, x_max = X[:, 0].min() - 0.5, X[:, 0].max() + 0.5
-    y_min, y_max = X[:, 1].min() - 0.5, X[:, 1].max() + 0.5
-    xx, yy = np.meshgrid(np.linspace(x_min, x_max, 100),
-                         np.linspace(y_min, y_max, 100))
+    # 创建图形
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 12))
     
-    # 合并为特征数组
-    grid = np.c_[xx.ravel(), yy.ravel()]
+    # 绘制损失曲线
+    ax1.plot(history['train_loss'], label='Training Loss')
+    ax1.plot(history['val_loss'], label='Validation Loss')
+    ax1.set_title('Model Loss')
+    ax1.set_xlabel('Epoch')
+    ax1.set_ylabel('Loss')
+    ax1.legend()
+    ax1.grid(True)
     
-    # 预测
+    # 绘制评估指标曲线
+    if 'train_r2' in history:
+        ax2.plot(history['train_r2'], label='Training R²')
+        ax2.plot(history['val_r2'], label='Validation R²')
+        ax2.set_title('Model R²')
+        ax2.set_xlabel('Epoch')
+        ax2.set_ylabel('R²')
+        ax2.legend()
+        ax2.grid(True)
+    
+    plt.tight_layout()
+    plt.savefig(output_path)
+    plt.close()
+    print(f"训练历史图已保存到: {output_path}")
+
+def visualize_model_summary(model, input_shape=(1, 1, 4, 5)):
+    """
+    打印模型的详细信息
+    Args:
+        model: PyTorch模型
+        input_shape: 输入张量的形状
+    """
+    print("\n模型结构摘要:")
+    print("=" * 50)
+    print(model)
+    
+    # 计算参数数量
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    
+    print("\n模型统计信息:")
+    print("=" * 50)
+    print(f"总参数量: {total_params:,}")
+    print(f"可训练参数量: {trainable_params:,}")
+    
+    # 打印每层的输出形状
+    print("\n每层输出形状:")
+    print("=" * 50)
+    x = torch.randn(input_shape)
+    
+    # 使用forward_features方法获取中间层的输出
+    activations = {}
+    hooks = []
+    
+    def hook_fn(name):
+        def hook(module, input, output):
+            activations[name] = output
+        return hook
+    
+    # 为每一层注册钩子
+    for name, module in model.named_modules():
+        if not any(isinstance(module, t) for t in [nn.Sequential, BasicCNN, AdvancedCNN, EnhancedCNN]):
+            hooks.append(module.register_forward_hook(hook_fn(name)))
+    
+    # 前向传播
     model.eval()
     with torch.no_grad():
-        grid_tensor = torch.FloatTensor(grid)
-        z = model(grid_tensor).cpu().numpy().reshape(xx.shape)
+        output = model(x)
     
-    # 绘制等高线图
-    plt.figure(figsize=(10, 8))
+    # 移除钩子
+    for hook in hooks:
+        hook.remove()
     
-    # 等高线
-    contour = plt.contourf(xx, yy, z, 20, cmap='viridis', alpha=0.8)
-    plt.colorbar(contour, label='预测值')
+    # 打印每层的输出形状
+    for name, activation in activations.items():
+        print(f"{name}: {tuple(activation.shape)}")
     
-    # 实际数据点
-    scatter = plt.scatter(X[:, 0], X[:, 1], c=y, cmap='plasma', 
-                         edgecolor='k', s=40, alpha=0.7)
-    plt.colorbar(scatter, label='实际值')
+    print(f"最终输出: {tuple(output.shape)}")
+
+def visualize_all_feature_maps(model, input_tensor=None, output_path='results/feature_maps'):
+    """
+    可视化模型中所有关键层的特征图
+    Args:
+        model: PyTorch模型
+        input_tensor: 输入张量，如果为None则生成随机输入
+        output_path: 输出目录路径
+    """
+    if input_tensor is None:
+        input_tensor = torch.randn(1, 1, 4, 5)
     
-    plt.title(f'{model_name} 在 {function_name} 数据上的预测')
-    plt.xlabel('X1')
-    plt.ylabel('X2')
+    # 创建输出目录
+    os.makedirs(output_path, exist_ok=True)
+    
+    # 收集所有需要可视化的层
+    layers_to_visualize = {}
+    for name, module in model.named_modules():
+        if isinstance(module, (nn.Conv2d, nn.BatchNorm2d)):
+            layers_to_visualize[name] = module
+    
+    # 注册钩子函数来获取特征图
+    features = {}
+    hooks = []
+    
+    def hook_fn(name):
+        def hook(module, input, output):
+            features[name] = output.detach()
+        return hook
+    
+    # 为每一层注册钩子
+    for name, module in layers_to_visualize.items():
+        hooks.append(module.register_forward_hook(hook_fn(name)))
+    
+    # 前向传播
+    model.eval()
+    with torch.no_grad():
+        _ = model(input_tensor)
+    
+    # 移除钩子
+    for hook in hooks:
+        hook.remove()
+    
+    # 可视化每一层的特征图
+    for name, feature_maps in features.items():
+        feature_maps = feature_maps.squeeze(0)
+        
+        # 创建图形
+        num_channels = feature_maps.size(0)
+        num_cols = min(8, num_channels)
+        num_rows = (num_channels + num_cols - 1) // num_cols
+        
+        plt.figure(figsize=(2*num_cols, 2*num_rows))
+        plt.suptitle(f'Feature Maps - {name}')
+        
+        for i in range(num_channels):
+            plt.subplot(num_rows, num_cols, i + 1)
+            plt.imshow(feature_maps[i].numpy(), cmap='viridis')
+            plt.axis('off')
+            plt.title(f'Channel {i+1}')
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_path, f'{name}_feature_maps.png'))
+        plt.close()
+        print(f"特征图已保存到: {os.path.join(output_path, f'{name}_feature_maps.png')}")
+
+def visualize_activation_distributions(model, input_tensor=None, output_path='results/activations'):
+    """
+    可视化每一层激活值的分布
+    Args:
+        model: PyTorch模型
+        input_tensor: 输入张量，如果为None则生成随机输入
+        output_path: 输出目录路径
+    """
+    if input_tensor is None:
+        input_tensor = torch.randn(1, 1, 4, 5)
+    
+    # 创建输出目录
+    os.makedirs(output_path, exist_ok=True)
+    
+    # 收集所有层的激活值
+    activations = {}
+    hooks = []
+    
+    def hook_fn(name):
+        def hook(module, input, output):
+            activations[name] = output.detach()
+        return hook
+    
+    # 为每一层注册钩子
+    for name, module in model.named_modules():
+        if isinstance(module, (nn.Conv2d, nn.BatchNorm2d, nn.Linear)):
+            hooks.append(module.register_forward_hook(hook_fn(name)))
+    
+    # 前向传播
+    model.eval()
+    with torch.no_grad():
+        _ = model(input_tensor)
+    
+    # 移除钩子
+    for hook in hooks:
+        hook.remove()
+    
+    # 创建分布图
+    plt.figure(figsize=(15, 5*((len(activations)+2)//3)))
+    for i, (name, activation) in enumerate(activations.items(), 1):
+        plt.subplot((len(activations)+2)//3, 3, i)
+        activation_flat = activation.flatten().numpy()
+        sns.histplot(activation_flat, bins=50, kde=True)
+        plt.title(f'Activation Distribution - {name}')
+        plt.xlabel('Activation Value')
+        plt.ylabel('Count')
+    
     plt.tight_layout()
-    plt.savefig(f'visualizations/{function_name}_{model_name}_prediction_map.png')
+    plt.savefig(os.path.join(output_path, 'activation_distributions.png'))
     plt.close()
-    print(f"预测可视化已保存为: visualizations/{function_name}_{model_name}_prediction_map.png")
+    print(f"激活值分布图已保存到: {os.path.join(output_path, 'activation_distributions.png')}")
 
 def main():
-    print("===== 开始模型可视化 =====")
+    parser = argparse.ArgumentParser(description='模型可视化工具')
+    parser.add_argument('--model_path', type=str, required=True, help='模型权重文件路径')
+    parser.add_argument('--model_type', type=str, default='basic', choices=['basic', 'advanced', 'enhanced'], help='模型类型')
+    parser.add_argument('--layer', type=str, default='conv1', help='要可视化的层名称')
+    parser.add_argument('--history_file', type=str, help='训练历史文件路径')
+    parser.add_argument('--output_dir', type=str, default='results/visualization', help='输出目录')
+    parser.add_argument('--show_summary', action='store_true', help='是否显示模型摘要信息')
+    parser.add_argument('--all_layers', action='store_true', help='是否显示所有层的特征图')
     
-    # 加载数据
-    data_dict = load_data()
-    if data_dict is None:
+    args = parser.parse_args()
+    
+    # 创建输出目录
+    os.makedirs(args.output_dir, exist_ok=True)
+    
+    # 加载模型
+    if args.model_type == 'basic':
+        model = BasicCNN()
+    elif args.model_type == 'advanced':
+        model = AdvancedCNN()
+    else:
+        model = EnhancedCNN()
+    
+    try:
+        model.load_state_dict(torch.load(args.model_path))
+        print(f"成功加载模型权重: {args.model_path}")
+    except Exception as e:
+        print(f"加载模型权重失败: {str(e)}")
         return
     
-    for function_name in ['ackley', 'rosenbrock']:
-        x_train, y_train, x_test, y_test = data_dict[function_name]
-        input_dim = x_train.shape[1]
-        
-        # 加载基础CNN模型
-        try:
-            basic_model = CNN(input_dim)
-            basic_model.load_state_dict(torch.load(f'models/cnn_{function_name}.pth'))
-            basic_model.eval()
-            print(f"成功加载基础CNN模型: cnn_{function_name}.pth")
-            
-            # 可视化模型架构
-            visualize_model_architecture(basic_model, (input_dim,), f'basic_cnn_{function_name}_architecture')
-            
-            # 可视化卷积层
-            visualize_filters(basic_model, 'conv_layers', f'basic_cnn_{function_name}')
-            
-            # 可视化特征图
-            visualize_feature_maps(basic_model, x_test[0], 'conv_layers', f'basic_cnn_{function_name}')
-            
-            # 如果是2D数据，可视化预测
-            if input_dim == 2:
-                visualize_predictions_2d(basic_model, x_test, y_test, function_name, 'basic_cnn')
-        except Exception as e:
-            print(f"可视化基础CNN模型时出错: {str(e)}")
-        
-        # 加载高级CNN模型
-        try:
-            advanced_model = AdvancedCNN(input_dim)
-            advanced_model.load_state_dict(torch.load(f'models/advanced_cnn_{function_name}.pth'))
-            advanced_model.eval()
-            print(f"成功加载高级CNN模型: advanced_cnn_{function_name}.pth")
-            
-            # 可视化模型架构
-            visualize_model_architecture(advanced_model, (input_dim,), f'advanced_cnn_{function_name}_architecture')
-            
-            # 可视化卷积层
-            visualize_filters(advanced_model, 'conv1', f'advanced_cnn_{function_name}')
-            
-            # 可视化特征图
-            visualize_feature_maps(advanced_model, x_test[0], 'conv1', f'advanced_cnn_{function_name}')
-            
-            # 如果是2D数据，可视化预测
-            if input_dim == 2:
-                visualize_predictions_2d(advanced_model, x_test, y_test, function_name, 'advanced_cnn')
-        except Exception as e:
-            print(f"可视化高级CNN模型时出错: {str(e)}")
+    model.eval()
     
-    print("===== 模型可视化完成 =====")
+    # 显示模型摘要
+    if args.show_summary:
+        visualize_model_summary(model)
+    
+    # 可视化模型结构
+    structure_path = os.path.join(args.output_dir, f'{args.model_type}_structure')
+    try:
+        visualize_model_structure(model, output_path=structure_path)
+    except Exception as e:
+        print(f"生成模型结构图失败: {str(e)}")
+    
+    # 可视化所有层的特征图
+    if args.all_layers:
+        visualize_all_feature_maps(model, output_path=os.path.join(args.output_dir, 'feature_maps'))
+        visualize_activation_distributions(model, output_path=os.path.join(args.output_dir, 'activations'))
+    else:
+        # 可视化单个层的特征图
+        feature_maps_dir = os.path.join(args.output_dir, 'feature_maps')
+        visualize_feature_maps(model, args.layer, output_path=feature_maps_dir)
+    
+    # 如果提供了训练历史文件，则可视化训练过程
+    if args.history_file:
+        try:
+            history_path = os.path.join(args.output_dir, f'{args.model_type}_training_history.png')
+            visualize_training_history(args.history_file, output_path=history_path)
+        except Exception as e:
+            print(f"生成训练历史图失败: {str(e)}")
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main() 

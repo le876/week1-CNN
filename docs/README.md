@@ -1,6 +1,10 @@
-# CNN模型训练与优化项目
+# 扩展技术文档
 
-这个项目使用卷积神经网络(CNN)来学习Ackley和Rosenbrock函数，并提供了全面的深度学习训练与优化流程，包括数据处理、模型训练、超参数优化、模型解释和可视化等功能。
+本文档为CNN函数逼近项目提供全面的技术细节。如需快速了解，请参见主[README.md](../README.md)。
+
+## 项目概述
+
+本项目展示了如何应用Convolutional Neural Networks来逼近复杂的数学函数（Ackley函数和Rosenbrock函数），构建了具备研究和生产应用高级特性的完整机器学习pipeline。
 
 ## 项目结构
 
